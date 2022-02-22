@@ -1,7 +1,10 @@
+// Color ICP Registration
+// Hanzhe Teng, Feb 2022
 
 #include "color_icp/helper.h"
 #include "color_icp/remove_nan.h"
 
+#include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/registration/icp.h>
 #include <pcl/visualization/pcl_visualizer.h>
@@ -10,9 +13,54 @@
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/kdtree/impl/kdtree_flann.hpp>  // needed for L1 distance
 
+#include <Eigen/Geometry>
 
 using PointT = pcl::PointXYZRGB;
 using PointCloudPtr = pcl::PointCloud<PointT>::Ptr;
+
+Eigen::Matrix4f ClassicICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target) {
+  // initialization
+  int iteration = 50;
+  int cloud_size = static_cast<int> (source->size());
+  Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
+  Eigen::Matrix<float, 3, Eigen::Dynamic> cloud_src (3, cloud_size);
+  Eigen::Matrix<float, 3, Eigen::Dynamic> cloud_tgt (3, cloud_size);
+  pcl::PointCloud<PointT>::Ptr source_trans (new pcl::PointCloud<PointT>);
+
+  // build K-d tree for target cloud
+  pcl::search::KdTree<PointT>::Ptr kdtree (new pcl::search::KdTree<PointT>);
+  kdtree->setInputCloud(target);
+  std::vector<int> indices;    // for nearestKSearch
+  std::vector<float> sq_dist;  // for nearestKSearch
+
+  // repeat until convergence
+  for (int t = 0; t < iteration; ++t) {
+    // transform source using estimated transformation
+    pcl::transformPointCloud<PointT> (*source, *source_trans, transform);
+
+    for (int i = 0; i < cloud_size; ++i) {
+      // convert source to Eigen format
+      cloud_src (0, i) = source_trans->points[i].x;
+      cloud_src (1, i) = source_trans->points[i].y;
+      cloud_src (2, i) = source_trans->points[i].z;
+
+      // find the closest point in target and save in Eigen format
+      kdtree->nearestKSearch(source_trans->points[i], 1, indices, sq_dist);
+      const PointT &pt = target->points[indices[0]];
+      cloud_tgt (0, i) = pt.x;
+      cloud_tgt (1, i) = pt.y;
+      cloud_tgt (2, i) = pt.z;
+    }
+
+    // solve using Umeyama's algorithm (SVD)
+    // also refer to pcl/registration/impl/transformation_estimation_svd.hpp
+    transform = Eigen::umeyama (cloud_src, cloud_tgt, false);
+    std::cout << "it = " << t << "; current transformation estimation" << std::endl << transform << std::endl;
+  }
+
+  return transform;
+}
+
 
 void visualizeRegistration (const PointCloudPtr& source,
                             const PointCloudPtr& source_transformed, 
@@ -75,16 +123,20 @@ int main(int argc, char** argv){
   std::cout << "[source] Downsampled to " << source_cloud->size () << " points\n";
   std::cout << "[target] Downsampled to " << target_cloud->size () << " points\n";
 
-  // ICP registration
-  pcl::PointCloud<PointT> registration_output;
-  pcl::IterativeClosestPoint<PointT, PointT> icp;
-  icp.setMaxCorrespondenceDistance (0.05);
-  icp.setTransformationEpsilon (0.000001);
-  icp.setMaximumIterations (100);
-  icp.setInputSource (source_cloud);
-  icp.setInputTarget (target_cloud);
-  icp.align (registration_output);
-  transformation = icp.getFinalTransformation ();
+  // // ICP registration in PCL
+  // pcl::PointCloud<PointT> registration_output;
+  // pcl::IterativeClosestPoint<PointT, PointT> icp;
+  // icp.setMaxCorrespondenceDistance (0.05);
+  // icp.setTransformationEpsilon (0.000001);
+  // icp.setMaximumIterations (100);
+  // icp.setInputSource (source_cloud);
+  // icp.setInputTarget (target_cloud);
+  // icp.align (registration_output);
+  // transformation = icp.getFinalTransformation ();
+  // std::cout << "Estimated transformation " << std::endl << transformation << std::endl;
+
+  // Classic ICP registration
+  transformation = ClassicICPRegistration(source_cloud, target_cloud);
   std::cout << "Estimated transformation " << std::endl << transformation << std::endl;
 
   // visualization
