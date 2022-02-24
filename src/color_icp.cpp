@@ -18,47 +18,64 @@
 using PointT = pcl::PointXYZRGB;
 using PointCloudPtr = pcl::PointCloud<PointT>::Ptr;
 
+// refer to pcl/registration/impl/icp.hpp and transformation_estimation_svd.hpp
 Eigen::Matrix4f ClassicICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target) {
   // initialization
-  int iteration = 50;
+  int iteration = 100;
+  float distance_threshold = 0.05; // icp.setMaxCorrespondenceDistance
   int cloud_size = static_cast<int> (source->size());
-  Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
-  Eigen::Matrix<float, 3, Eigen::Dynamic> cloud_src (3, cloud_size);
-  Eigen::Matrix<float, 3, Eigen::Dynamic> cloud_tgt (3, cloud_size);
+  Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
+  Eigen::Matrix4f final_transformation = Eigen::Matrix4f::Identity();
   pcl::PointCloud<PointT>::Ptr source_trans (new pcl::PointCloud<PointT>);
 
   // build K-d tree for target cloud
   pcl::search::KdTree<PointT>::Ptr kdtree (new pcl::search::KdTree<PointT>);
   kdtree->setInputCloud(target);
-  std::vector<int> indices;    // for nearestKSearch
-  std::vector<float> sq_dist;  // for nearestKSearch
+  std::vector<int> indices (1);    // for nearestKSearch
+  std::vector<float> sq_dist (1);  // for nearestKSearch
 
   // repeat until convergence
   for (int t = 0; t < iteration; ++t) {
     // transform source using estimated transformation
-    pcl::transformPointCloud<PointT> (*source, *source_trans, transform);
+    pcl::transformPointCloud<PointT> (*source, *source_trans, final_transformation);
 
+    // visualize source_trans in each step if needed
+
+    // find correspondences in target
+    std::vector<std::pair<int, int>> correspondences;
     for (int i = 0; i < cloud_size; ++i) {
-      // convert source to Eigen format
-      cloud_src (0, i) = source_trans->points[i].x;
-      cloud_src (1, i) = source_trans->points[i].y;
-      cloud_src (2, i) = source_trans->points[i].z;
-
-      // find the closest point in target and save in Eigen format
       kdtree->nearestKSearch(source_trans->points[i], 1, indices, sq_dist);
-      const PointT &pt = target->points[indices[0]];
-      cloud_tgt (0, i) = pt.x;
-      cloud_tgt (1, i) = pt.y;
-      cloud_tgt (2, i) = pt.z;
+      if (sq_dist[0] > distance_threshold * distance_threshold) // skip if too far
+        continue;
+      correspondences.push_back({i, indices[0]});
     }
 
+    // convert to Eigen format
+    int idx = 0;
+    Eigen::Matrix<float, 3, Eigen::Dynamic> cloud_src (3, correspondences.size());
+    Eigen::Matrix<float, 3, Eigen::Dynamic> cloud_tgt (3, correspondences.size());
+    for (const auto& corres : correspondences) {
+      cloud_src (0, idx) = source_trans->points[corres.first].x;
+      cloud_src (1, idx) = source_trans->points[corres.first].y;
+      cloud_src (2, idx) = source_trans->points[corres.first].z;
+      cloud_tgt (0, idx) = target->points[corres.second].x;
+      cloud_tgt (1, idx) = target->points[corres.second].y;
+      cloud_tgt (2, idx) = target->points[corres.second].z;
+      ++idx;
+    }
+
+    // skip a few steps here for simplicity, such as
+    // check convergence (if trans update < required epsilon)
+    // check if cloud_src and cloud_tgt are valid (>0 or >3?)
+
     // solve using Umeyama's algorithm (SVD)
-    // also refer to pcl/registration/impl/transformation_estimation_svd.hpp
-    transform = Eigen::umeyama (cloud_src, cloud_tgt, false);
-    std::cout << "it = " << t << "; current transformation estimation" << std::endl << transform << std::endl;
+    transformation = Eigen::umeyama (cloud_src, cloud_tgt, false);
+    final_transformation = transformation * final_transformation;
+    std::cout << "it = " << t << "; cloud size = " << cloud_size << "; idx = " << idx << std::endl;
+    std::cout << "current transformation estimation" << std::endl << final_transformation << std::endl;
   }
 
-  return transform;
+  return final_transformation;
 }
 
 
