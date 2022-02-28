@@ -26,3 +26,6 @@ add_definitions(${PCL_DEFINITIONS})
 
 add_executable (color_icp src/color_icp.cpp)
 target_link_libraries (color_icp ${PCL_LIBRARIES})
+
+add_executable (optimization src/optimization.cpp)
+target_link_libraries (optimization ${PCL_LIBRARIES})
