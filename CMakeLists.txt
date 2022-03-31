@@ -23,9 +23,10 @@ include_directories(
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
+add_library(yaml src/yaml.cpp)
 
 add_executable (color_icp src/color_icp.cpp)
-target_link_libraries (color_icp ${PCL_LIBRARIES})
+target_link_libraries (color_icp ${PCL_LIBRARIES} yaml)
 
 add_executable (optimization src/optimization.cpp)
 target_link_libraries (optimization ${PCL_LIBRARIES})
