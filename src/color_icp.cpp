@@ -306,7 +306,7 @@ Eigen::Matrix4d ColorICP::ColorICPRegistration (const PointCloudPtr& source, con
     // copy color gradient accordingly for selected correspondences
     std::vector<Eigen::Vector3d> gradient_tgt (corres_size);
     for (int i = 0; i < corres_size; ++i) {
-      gradient_tgt.push_back(target_color_gradient_[indices_tgt[i]]);
+      gradient_tgt[i] = target_color_gradient_[indices_tgt[i]];
     }
 
     // solve using Gauss-Newton method
