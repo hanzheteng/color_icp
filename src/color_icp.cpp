@@ -40,6 +40,7 @@ class ColorICP {
     void estimateNormals (const PointCloudPtr& cloud);
     void copyPointCloud (const PointCloudPtr& cloud_in, const std::vector<int>& indices, PointCloudPtr& cloud_out);
     void visualizeRegistration (const PointCloudPtr& source, const PointCloudPtr& source_transformed, const PointCloudPtr& target);
+    void visualizeRegistrationWithColor (const PointCloudPtr& source_transformed, const PointCloudPtr& target);
     void prepareColorGradient (const PointCloudPtr& target);
 
     Eigen::Matrix4d PCLICP (const PointCloudPtr& source, const PointCloudPtr& target);
@@ -99,7 +100,10 @@ ColorICP::ColorICP ()
   // visualization
   pcl::PointCloud<PointT>::Ptr source_cloud_transformed (new pcl::PointCloud<PointT>);
   pcl::transformPointCloud (*source_cloud_, *source_cloud_transformed, transformation_);
-  visualizeRegistration(source_cloud_, source_cloud_transformed, target_cloud_);
+  if (params_["color_visualization"].As<bool> ())
+    visualizeRegistrationWithColor(source_cloud_transformed, target_cloud_);
+  else
+    visualizeRegistration(source_cloud_, source_cloud_transformed, target_cloud_);
 }
 
 
@@ -162,6 +166,20 @@ void ColorICP::visualizeRegistration (const PointCloudPtr& source,
   visualizer.addPointCloud (source, source_color_handler, "source cloud");
   visualizer.addPointCloud (source_transformed, source_transformed_color_handler, "source cloud transformed");
   visualizer.addPointCloud (target, target_color_handler, "target cloud");
+  
+  while (!visualizer.wasStopped ()) {
+    visualizer.spinOnce ();
+    pcl_sleep(0.01);
+  }
+}
+
+
+void ColorICP::visualizeRegistrationWithColor (const PointCloudPtr& source_transformed, 
+                                               const PointCloudPtr& target) {
+  // add point clouds to the viewer
+  pcl::visualization::PCLVisualizer visualizer;
+  visualizer.addPointCloud<PointT> (source_transformed, "source cloud transformed");
+  visualizer.addPointCloud<PointT> (target, "target cloud");
   
   while (!visualizer.wasStopped ()) {
     visualizer.spinOnce ();
