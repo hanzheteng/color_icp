@@ -56,6 +56,7 @@ class ColorICP {
     pcl::PointCloud<PointT>::Ptr source_cloud_;
     pcl::PointCloud<PointT>::Ptr target_cloud_;
     std::vector<Eigen::Vector3d> target_color_gradient_;
+    Eigen::Vector3d rgb_to_intensity_weight_;
     Eigen::Matrix4d transformation_;
     Yaml::Node params_;
 };
@@ -65,10 +66,19 @@ ColorICP::ColorICP ()
     : source_cloud_ (new pcl::PointCloud<PointT>)
     , target_cloud_ (new pcl::PointCloud<PointT>)
     , transformation_ (Eigen::Matrix4d::Identity ())
+    , rgb_to_intensity_weight_ (Eigen::Vector3d::Ones () / 3.0)
     , kdtree_ (new pcl::search::KdTree<PointT, pcl::KdTreeFLANN<PointT, flann::L2_Simple<float>>>) {
 
-  // load point clouds
+  // init params
   Yaml::Parse (params_, "../config/params.yaml");
+  std::string color_weight = params_["color_weight"].As<std::string> ();
+  if (color_weight == "ntsc")
+    rgb_to_intensity_weight_ = Eigen::Vector3d (0.299, 0.587, 0.114); // YIQ, YUV and NTSC
+  else if (color_weight == "srgb")
+    rgb_to_intensity_weight_ = Eigen::Vector3d (0.2126, 0.7152, 0.0722); // sRGB (and Rec709)
+  // see paper: Why You Should Forget Luminance Conversion and Do Something Better, CVPR 2017
+
+  // load point clouds
   std::string src_filename = params_["source_cloud"].As<std::string> ();
   std::string tar_filename = params_["target_cloud"].As<std::string> ();
   if (my::loadPointCloud<PointT> (src_filename, *source_cloud_))
@@ -334,25 +344,25 @@ void ColorICP::prepareColorGradient (const PointCloudPtr& target) {
   for (int i = 0; i < cloud_size; ++i) {
     const Eigen::Vector3d p = target->points[i].getVector3fMap().cast<double>();
     const Eigen::Vector3d np = target->points[i].getNormalVector3fMap().cast<double>();
-    const Eigen::Vector3i& cp = target->points[i].getRGBVector3i();
-    double ip = (0.3333*cp(0) + 0.3333*cp(1) + 0.3333*cp(2)) / 255.0;
-    // TODO: test varying weights to combine RGB
-    // TODO: test if the magnitude of intensity matters in optimization
+    const Eigen::Vector3d cp = target->points[i].getRGBVector3i().cast<double>();
+    double ip = cp.dot(rgb_to_intensity_weight_) / 255.0;
+    // TODO: test varying weights to combine RGB --> less sensitive; almost no influence; depends on the scene
+    // TODO: test if the magnitude of intensity matters in optimization --> a lot; has to be [0, 1]
 
     // search neighbor points for least square fitting
     kdtree->radiusSearch(target->points[i], search_radius, indices, sq_dist);
     int nn_size = static_cast<int> (indices.size());
     if (nn_size < 5) {
       std::cerr << "[WARNING]: not enough points in the neighborhood; size = " << nn_size << "; skipping ... \n";
-      continue; // TODO: test the influence of leaving color gradient zero
+      continue; // TODO: test the influence of leaving color gradient zero --> no contribution from this component
     }
 
     Eigen::Matrix3Xd Jacobian (3, nn_size); // 3-vector of dp
     Eigen::VectorXd Residual (nn_size);     // see Eq. 10 in the paper
     for (int k = 1; k < nn_size; ++k) {     // skip index 0, which is the query point itself
       const Eigen::Vector3d pp = target->points[indices[k]].getVector3fMap().cast<double>();
-      const Eigen::Vector3i& cpp = target->points[indices[k]].getRGBVector3i();
-      double ipp = (0.3333*cpp(0) + 0.3333*cpp(1) + 0.3333*cpp(2)) / 255.0;
+      const Eigen::Vector3d cpp = target->points[indices[k]].getRGBVector3i().cast<double>();
+      double ipp = cpp.dot(rgb_to_intensity_weight_) / 255.0;
 
       // project neighbor points to p's tangent plane
       const Eigen::Vector3d& pp_proj = pp - (pp-p).dot(np)*np;
@@ -361,7 +371,8 @@ void ColorICP::prepareColorGradient (const PointCloudPtr& target) {
     }
     // add orthogonal constraint dp.dot(np) = 0 with weight (nn_size-1)
     Jacobian.block<3, 1>(0, nn_size-1) = (nn_size-1) * np;
-    Residual (nn_size-1) = 0; // TODO: test the influence of this constraint
+    Residual (nn_size-1) = 0; // TODO: test the influence of this constraint --> can make JTr_C closer to 0
+    // --> make JTJ larger (away from 0), JTr no change and X smaller to a reasonable range (e.g., 0-1)
 
     Eigen::Matrix3d JTJ = Jacobian * Jacobian.transpose();
     Eigen::Vector3d JTr = Jacobian * Residual;
@@ -384,13 +395,13 @@ Eigen::Matrix4d ColorICP::GaussNewtonWithColor (const PointCloudPtr& source, con
 
   for (int i = 0; i < size; ++i) {
     const Eigen::Vector3d q = source->points[i].getVector3fMap().cast<double>();
-    const Eigen::Vector3i& cq = source->points[i].getRGBVector3i();
-    double iq = (0.3333*cq(0) + 0.3333*cq(1) + 0.3333*cq(2)) / 255.0;
+    const Eigen::Vector3d cq = source->points[i].getRGBVector3i().cast<double>();
+    double iq = cq.dot(rgb_to_intensity_weight_) / 255.0;
     
     const Eigen::Vector3d p = target->points[i].getVector3fMap().cast<double>();
     const Eigen::Vector3d np = target->points[i].getNormalVector3fMap().cast<double>();
-    const Eigen::Vector3i& cp = target->points[i].getRGBVector3i();
-    double ip = (0.3333*cp(0) + 0.3333*cp(1) + 0.3333*cp(2)) / 255.0;
+    const Eigen::Vector3d cp = target->points[i].getRGBVector3i().cast<double>();
+    double ip = cp.dot(rgb_to_intensity_weight_) / 255.0;
     const Eigen::Vector3d& dp = target_gradient[i];
 
     ResidualGeo (i) = (q - p).dot(np);           // Eq. 19 in the paper
@@ -411,6 +422,10 @@ Eigen::Matrix4d ColorICP::GaussNewtonWithColor (const PointCloudPtr& source, con
   Eigen::Vector6d JTr_G = JacobianGeo * ResidualGeo;
   Eigen::Matrix6d JTJ_C = JacobianColor * JacobianColor.transpose();
   Eigen::Vector6d JTr_C = JacobianColor * ResidualColor;
+  std::cout << "JTJ_G = \n" <<  JTJ_G << std::endl;
+  std::cout << "JTr_G = \n" <<  JTr_G << std::endl;
+  std::cout << "JTJ_C = \n" <<  JTJ_C << std::endl;
+  std::cout << "JTr_C = \n" <<  JTr_C << std::endl;
 
   Eigen::Matrix6d JTJ = sqrt(lambda) * JTJ_G + sqrt(1-lambda) * JTJ_C;
   Eigen::Vector6d JTr = sqrt(lambda) * JTr_G + sqrt(1-lambda) * JTr_C;

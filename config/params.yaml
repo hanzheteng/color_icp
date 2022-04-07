@@ -14,4 +14,5 @@ icp_max_corres_dist: 0.05
 icp_transformation_epsilon: 0.000001  # not being used yet
 icp_max_iterations: 10
 color_icp_lambda: 0.968  # default 0.968 as in the paper
+color_weight: average    # average, srgb, ntsc
 color_visualization: true
