@@ -19,9 +19,6 @@
 
 
 namespace Eigen {
-    typedef Eigen::Matrix<float, 6, 6> Matrix6f;
-    typedef Eigen::Matrix<float, 6, 1> Vector6f;
-    typedef Eigen::Matrix<float, 6, -1> Matrix6Xf;
     typedef Eigen::Matrix<double, 6, 6> Matrix6d;
     typedef Eigen::Matrix<double, 6, 1> Vector6d;
     typedef Eigen::Matrix<double, 6, -1> Matrix6Xd;
@@ -45,20 +42,20 @@ class ColorICP {
     void visualizeRegistration (const PointCloudPtr& source, const PointCloudPtr& source_transformed, const PointCloudPtr& target);
     void prepareColorGradient (const PointCloudPtr& target);
 
-    Eigen::Matrix4f PCLICP (const PointCloudPtr& source, const PointCloudPtr& target);
-    Eigen::Matrix4f ClassicICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target);
-    Eigen::Matrix4f ColorICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target);
-    Eigen::Matrix4f GaussNewton (const PointCloudPtr& source, const PointCloudPtr& target);
-    Eigen::Matrix4f GaussNewtonWithColor (const PointCloudPtr& source, const PointCloudPtr& target, 
-                                          const std::vector<Eigen::Vector3f>& target_gradient);
-    Eigen::Matrix4f TransformVector6fToMatrix4f (const Eigen::Vector6f& input);
+    Eigen::Matrix4d PCLICP (const PointCloudPtr& source, const PointCloudPtr& target);
+    Eigen::Matrix4d ClassicICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target);
+    Eigen::Matrix4d ColorICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target);
+    Eigen::Matrix4d GaussNewton (const PointCloudPtr& source, const PointCloudPtr& target);
+    Eigen::Matrix4d GaussNewtonWithColor (const PointCloudPtr& source, const PointCloudPtr& target, 
+                                          const std::vector<Eigen::Vector3d>& target_gradient);
+    Eigen::Matrix4d TransformVector6dToMatrix4d (const Eigen::Vector6d& input);
 
   private:
     pcl::search::KdTree<PointT, pcl::KdTreeFLANN<PointT, flann::L2_Simple<float>>>::Ptr kdtree_;
     pcl::PointCloud<PointT>::Ptr source_cloud_;
     pcl::PointCloud<PointT>::Ptr target_cloud_;
-    std::vector<Eigen::Vector3f> target_color_gradient_;
-    Eigen::Matrix4f transformation_;
+    std::vector<Eigen::Vector3d> target_color_gradient_;
+    Eigen::Matrix4d transformation_;
     Yaml::Node params_;
 };
 
@@ -66,7 +63,7 @@ class ColorICP {
 ColorICP::ColorICP ()
     : source_cloud_ (new pcl::PointCloud<PointT>)
     , target_cloud_ (new pcl::PointCloud<PointT>)
-    , transformation_ (Eigen::Matrix4f::Identity ())
+    , transformation_ (Eigen::Matrix4d::Identity ())
     , kdtree_ (new pcl::search::KdTree<PointT, pcl::KdTreeFLANN<PointT, flann::L2_Simple<float>>>) {
 
   // load point clouds
@@ -116,7 +113,7 @@ void ColorICP::removeNaNPoints (const PointCloudPtr& cloud) {
 
 
 void ColorICP::downSampleVoxelGrids (const PointCloudPtr& cloud) {
-  float resolution = params_["voxel_resolution"].As<float> ();
+  double resolution = params_["voxel_resolution"].As<double> ();
   pcl::VoxelGrid<PointT> sor;
   sor.setLeafSize (resolution, resolution, resolution);
   sor.setInputCloud (cloud);
@@ -128,7 +125,7 @@ void ColorICP::downSampleVoxelGrids (const PointCloudPtr& cloud) {
 void ColorICP::estimateNormals (const PointCloudPtr& cloud) {
   pcl::NormalEstimation<PointT, NormalT> ne;
   ne.setSearchMethod (kdtree_);
-  ne.setRadiusSearch (params_["normal_est_radius"].As<float> ());
+  ne.setRadiusSearch (params_["normal_est_radius"].As<double> ());
   ne.setInputCloud (cloud);
   ne.compute (*cloud);
   std::cout << "Computed " << cloud->size () << " Normals\n";
@@ -173,11 +170,11 @@ void ColorICP::visualizeRegistration (const PointCloudPtr& source,
 }
 
 
-Eigen::Matrix4f ColorICP::PCLICP (const PointCloudPtr& source, const PointCloudPtr& target) {
+Eigen::Matrix4d ColorICP::PCLICP (const PointCloudPtr& source, const PointCloudPtr& target) {
   pcl::PointCloud<PointT> registration_output;
-  pcl::IterativeClosestPoint<PointT, PointT> icp;
-  icp.setMaxCorrespondenceDistance (params_["icp_max_corres_dist"].As<float> ());
-  icp.setTransformationEpsilon (params_["icp_transformation_epsilon"].As<float> ());
+  pcl::IterativeClosestPoint<PointT, PointT, double> icp;
+  icp.setMaxCorrespondenceDistance (params_["icp_max_corres_dist"].As<double> ());
+  icp.setTransformationEpsilon (params_["icp_transformation_epsilon"].As<double> ());
   icp.setMaximumIterations (params_["icp_max_iterations"].As<int> ());
   icp.setInputSource (source_cloud_);
   icp.setInputTarget (target_cloud_);
@@ -188,12 +185,12 @@ Eigen::Matrix4f ColorICP::PCLICP (const PointCloudPtr& source, const PointCloudP
 
 // refer to pcl/registration/impl/icp.hpp and transformation_estimation_svd.hpp
 // exactly the same behavior and performance as using PCLICP()
-Eigen::Matrix4f ColorICP::ClassicICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target) {
+Eigen::Matrix4d ColorICP::ClassicICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target) {
   // initialization
   int iteration = params_["icp_max_iterations"].As<int> ();
-  float distance_threshold = params_["icp_max_corres_dist"].As<float> (); // icp.setMaxCorrespondenceDistance
+  double distance_threshold = params_["icp_max_corres_dist"].As<double> (); // icp.setMaxCorrespondenceDistance
   int cloud_size = static_cast<int> (source->size());
-  Eigen::Matrix4f final_transformation = Eigen::Matrix4f::Identity();
+  Eigen::Matrix4d final_transformation = Eigen::Matrix4d::Identity();
   pcl::PointCloud<PointT>::Ptr source_trans (new pcl::PointCloud<PointT>);
 
   // build K-d tree for target cloud
@@ -220,8 +217,8 @@ Eigen::Matrix4f ColorICP::ClassicICPRegistration (const PointCloudPtr& source, c
 
     // convert to Eigen format
     int idx = 0;
-    Eigen::Matrix<float, 3, Eigen::Dynamic> cloud_src (3, correspondences.size());
-    Eigen::Matrix<float, 3, Eigen::Dynamic> cloud_tgt (3, correspondences.size());
+    Eigen::Matrix3d cloud_src (3, correspondences.size());
+    Eigen::Matrix3d cloud_tgt (3, correspondences.size());
     for (const auto& corres : correspondences) {
       cloud_src (0, idx) = source_trans->points[corres.first].x;
       cloud_src (1, idx) = source_trans->points[corres.first].y;
@@ -237,7 +234,7 @@ Eigen::Matrix4f ColorICP::ClassicICPRegistration (const PointCloudPtr& source, c
     // check if cloud_src and cloud_tgt are valid (>0 or >3?)
 
     // solve using Umeyama's algorithm (SVD)
-    Eigen::Matrix4f transformation = Eigen::umeyama (cloud_src, cloud_tgt, false);
+    Eigen::Matrix4d transformation = Eigen::umeyama<Eigen::Matrix3d, Eigen::Matrix3d> (cloud_src, cloud_tgt, false);
     final_transformation = transformation * final_transformation;
     std::cout << "it = " << t << "; cloud size = " << cloud_size << "; idx = " << idx << std::endl;
     std::cout << "current transformation estimation" << std::endl << final_transformation << std::endl;
@@ -250,12 +247,12 @@ Eigen::Matrix4f ColorICP::ClassicICPRegistration (const PointCloudPtr& source, c
 // Implementation according to the paper: Colored Point Cloud Registration Revisited, ICCV 2017
 // https://github.com/isl-org/Open3D/blob/master/cpp/open3d/pipelines/registration/ColoredICP.cpp
 // https://github.com/isl-org/Open3D/blob/master/cpp/open3d/utility/Eigen.cpp
-Eigen::Matrix4f ColorICP::ColorICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target) {
+Eigen::Matrix4d ColorICP::ColorICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target) {
   // initialization
-  int iteration = params_["icp_max_iterations"].As<float> ();
-  float distance_threshold = params_["icp_max_corres_dist"].As<float> (); // icp.setMaxCorrespondenceDistance
+  int iteration = params_["icp_max_iterations"].As<int> ();
+  double distance_threshold = params_["icp_max_corres_dist"].As<double> (); // icp.setMaxCorrespondenceDistance
   int cloud_size = static_cast<int> (source->size());
-  Eigen::Matrix4f final_transformation = Eigen::Matrix4f::Identity();
+  Eigen::Matrix4d final_transformation = Eigen::Matrix4d::Identity();
   pcl::PointCloud<PointT>::Ptr source_trans (new pcl::PointCloud<PointT>);
 
   // build K-d tree for target cloud
@@ -279,7 +276,8 @@ Eigen::Matrix4f ColorICP::ColorICPRegistration (const PointCloudPtr& source, con
       indices_src.push_back(i);
       indices_tgt.push_back(indices[0]);
     }
-    std::cout << "it = " << t << "; cloud size = " << cloud_size << "; selected size = " << indices_src.size() << std::endl;
+    int corres_size = static_cast<int> (indices_src.size());
+    std::cout << "it = " << t << "; cloud size = " << cloud_size << "; selected size = " << corres_size << std::endl;
 
     // copy selected correspondences to new point clouds
     pcl::PointCloud<PointT>::Ptr cloud_src (new pcl::PointCloud<PointT>);
@@ -288,13 +286,13 @@ Eigen::Matrix4f ColorICP::ColorICPRegistration (const PointCloudPtr& source, con
     copyPointCloud (target, indices_tgt, cloud_tgt);
 
     // copy color gradient accordingly for selected correspondences
-    std::vector<Eigen::Vector3f> gradient_tgt (indices_src.size());
-    for (int i = 0; i < indices_src.size(); ++i) {
+    std::vector<Eigen::Vector3d> gradient_tgt (corres_size);
+    for (int i = 0; i < corres_size; ++i) {
       gradient_tgt.push_back(target_color_gradient_[indices_tgt[i]]);
     }
 
     // solve using Gauss-Newton method
-    Eigen::Matrix4f transformation = GaussNewtonWithColor (cloud_src, cloud_tgt, gradient_tgt);
+    Eigen::Matrix4d transformation = GaussNewtonWithColor (cloud_src, cloud_tgt, gradient_tgt);
     final_transformation = transformation * final_transformation;
     std::cout << "transformation in this iteration" << std::endl << transformation << std::endl;
     std::cout << "current transformation estimation" << std::endl << final_transformation << std::endl;
@@ -313,14 +311,15 @@ void ColorICP::prepareColorGradient (const PointCloudPtr& target) {
   std::vector<float> sq_dist (1);
   double search_radius = params_["search_radius"].As<double> ();
   target_color_gradient_.clear();
-  target_color_gradient_.resize(cloud_size, Eigen::Vector3f::Zero());
+  target_color_gradient_.resize(cloud_size, Eigen::Vector3d::Zero());
 
   for (int i = 0; i < cloud_size; ++i) {
-    const Eigen::Vector3f& p = target->points[i].getVector3fMap();
-    const Eigen::Vector3f& np = target->points[i].getNormalVector3fMap();
+    const Eigen::Vector3d p = target->points[i].getVector3fMap().cast<double>();
+    const Eigen::Vector3d np = target->points[i].getNormalVector3fMap().cast<double>();
     const Eigen::Vector3i& cp = target->points[i].getRGBVector3i();
-    float ip = 0.3333*cp(0) + 0.3333*cp(1) + 0.3333*cp(2); // TODO: test varying weights to combine RGB
-    ip /= 255; // TODO: test if the magnitude of intensity matters in optimization
+    double ip = (0.3333*cp(0) + 0.3333*cp(1) + 0.3333*cp(2)) / 255.0;
+    // TODO: test varying weights to combine RGB
+    // TODO: test if the magnitude of intensity matters in optimization
 
     // search neighbor points for least square fitting
     kdtree->radiusSearch(target->points[i], search_radius, indices, sq_dist);
@@ -330,16 +329,15 @@ void ColorICP::prepareColorGradient (const PointCloudPtr& target) {
       continue; // TODO: test the influence of leaving color gradient zero
     }
 
-    Eigen::Matrix3Xf Jacobian (3, nn_size); // 3-vector of dp
-    Eigen::VectorXf Residual (nn_size);     // see Eq. 10 in the paper
+    Eigen::Matrix3Xd Jacobian (3, nn_size); // 3-vector of dp
+    Eigen::VectorXd Residual (nn_size);     // see Eq. 10 in the paper
     for (int k = 1; k < nn_size; ++k) {     // skip index 0, which is the query point itself
-      const Eigen::Vector3f& pp = target->points[indices[k]].getVector3fMap();
+      const Eigen::Vector3d pp = target->points[indices[k]].getVector3fMap().cast<double>();
       const Eigen::Vector3i& cpp = target->points[indices[k]].getRGBVector3i();
-      float ipp = 0.3333*cpp(0) + 0.3333*cpp(1) + 0.3333*cpp(2);
-      ipp /= 255;
+      double ipp = (0.3333*cpp(0) + 0.3333*cpp(1) + 0.3333*cpp(2)) / 255.0;
 
       // project neighbor points to p's tangent plane
-      Eigen::Vector3f pp_proj = pp - (pp-p).dot(np)*np;
+      const Eigen::Vector3d& pp_proj = pp - (pp-p).dot(np)*np;
       Jacobian.block<3, 1>(0, k-1) = pp_proj - p;
       Residual (k-1) = ipp - ip;
     }
@@ -347,9 +345,9 @@ void ColorICP::prepareColorGradient (const PointCloudPtr& target) {
     Jacobian.block<3, 1>(0, nn_size-1) = (nn_size-1) * np;
     Residual (nn_size-1) = 0; // TODO: test the influence of this constraint
 
-    Eigen::Matrix3f JTJ = Jacobian * Jacobian.transpose();
-    Eigen::Vector3f JTr = Jacobian * Residual;
-    Eigen::Vector3f X = JTJ.ldlt().solve(JTr);  // no minus sign
+    Eigen::Matrix3d JTJ = Jacobian * Jacobian.transpose();
+    Eigen::Vector3d JTr = Jacobian * Residual;
+    Eigen::Vector3d X = JTJ.ldlt().solve(JTr);  // no minus sign
     target_color_gradient_[i] = X;  // X is the estimated color gradient dp
   }
   std::cout << "Completed color gradient estimation for target cloud\n";
@@ -357,40 +355,38 @@ void ColorICP::prepareColorGradient (const PointCloudPtr& target) {
 
 
 // refer to TransformationEstimationForColoredICP::ComputeTransformation in open3d/pipelines/registration/ColoredICP.cpp
-Eigen::Matrix4f ColorICP::GaussNewtonWithColor (const PointCloudPtr& source, const PointCloudPtr& target, 
-                                            const std::vector<Eigen::Vector3f>& target_gradient) {
+Eigen::Matrix4d ColorICP::GaussNewtonWithColor (const PointCloudPtr& source, const PointCloudPtr& target, 
+                                                const std::vector<Eigen::Vector3d>& target_gradient) {
   int size = static_cast<int> (source->size());
   Eigen::Matrix6Xd JacobianGeo (6, size);
   Eigen::VectorXd ResidualGeo (size);
   Eigen::Matrix6Xd JacobianColor (6, size);
   Eigen::VectorXd ResidualColor (size);
-  const float lambda = params_["color_icp_lambda"].As<float> (); // TODO: test varying param values
+  double lambda = params_["color_icp_lambda"].As<double> (); // TODO: test varying param values
 
   for (int i = 0; i < size; ++i) {
-    const Eigen::Vector3f& q = source->points[i].getVector3fMap();
+    const Eigen::Vector3d q = source->points[i].getVector3fMap().cast<double>();
     const Eigen::Vector3i& cq = source->points[i].getRGBVector3i();
-    float iq = 0.3333*cq(0) + 0.3333*cq(1) + 0.3333*cq(2);
-    iq /= 255;
+    double iq = (0.3333*cq(0) + 0.3333*cq(1) + 0.3333*cq(2)) / 255.0;
     
-    const Eigen::Vector3f& p = target->points[i].getVector3fMap();
-    const Eigen::Vector3f& np = target->points[i].getNormalVector3fMap();
+    const Eigen::Vector3d p = target->points[i].getVector3fMap().cast<double>();
+    const Eigen::Vector3d np = target->points[i].getNormalVector3fMap().cast<double>();
     const Eigen::Vector3i& cp = target->points[i].getRGBVector3i();
-    float ip = 0.3333*cp(0) + 0.3333*cp(1) + 0.3333*cp(2);
-    ip /= 255;
-    const Eigen::Vector3f& dp = target_gradient[i];
+    double ip = (0.3333*cp(0) + 0.3333*cp(1) + 0.3333*cp(2)) / 255.0;
+    const Eigen::Vector3d& dp = target_gradient[i];
 
-    ResidualGeo (i) = (q - p).dot(np);                          // Eq. 19 in the paper
-    JacobianGeo.block<3, 1>(0, i) = q.cross(np).cast<double>(); // Eq. 30 in the paper
-    JacobianGeo.block<3, 1>(3, i) = np.cast<double>();
+    ResidualGeo (i) = (q - p).dot(np);           // Eq. 19 in the paper
+    JacobianGeo.block<3, 1>(0, i) = q.cross(np); // Eq. 30 in the paper
+    JacobianGeo.block<3, 1>(3, i) = np;
 
-    Eigen::Vector3f q_proj = q - (q-p).dot(np) * np;
-    float iq_proj = ip + dp.dot(q_proj-p);
-    Eigen::Matrix3f M = Eigen::Matrix3f::Identity() - np * np.transpose();
-    Eigen::Vector3f dpM = -dp.transpose() * M;
+    const Eigen::Vector3d& q_proj = q - (q-p).dot(np) * np;
+    const double& iq_proj = ip + dp.dot(q_proj-p);
+    const Eigen::Matrix3d& M = Eigen::Matrix3d::Identity() - np * np.transpose();
+    const Eigen::Vector3d& dpM = -dp.transpose() * M;
 
-    ResidualColor (i) = iq - iq_proj;                              // Eq. 18 in the paper
-    JacobianColor.block<3, 1>(0, i) = q.cross(dpM).cast<double>(); // Eq. 28-29 in the paper
-    JacobianColor.block<3, 1>(3, i) = dpM.cast<double>();
+    ResidualColor (i) = iq - iq_proj;               // Eq. 18 in the paper
+    JacobianColor.block<3, 1>(0, i) = q.cross(dpM); // Eq. 28-29 in the paper
+    JacobianColor.block<3, 1>(3, i) = dpM;
   }
 
   Eigen::Matrix6d JTJ_G = JacobianGeo * JacobianGeo.transpose();
@@ -404,38 +400,38 @@ Eigen::Matrix4f ColorICP::GaussNewtonWithColor (const PointCloudPtr& source, con
   std::cout << "JTJ = \n" <<  JTJ << std::endl;
   std::cout << "JTr = \n" <<  JTr << std::endl;
   std::cout << "X = \n" <<  X << std::endl;
-  return TransformVector6fToMatrix4f(X.cast<float> ());
+  return TransformVector6dToMatrix4d(X);
 }
 
 
-Eigen::Matrix4f ColorICP::GaussNewton (const PointCloudPtr& source, const PointCloudPtr& target) {
+Eigen::Matrix4d ColorICP::GaussNewton (const PointCloudPtr& source, const PointCloudPtr& target) {
   int size = static_cast<int> (source->size());
-  Eigen::Matrix6Xf Jacobian (6, size); // alpha, beta, gamma, a, b, c as in the linearized transformation matrix
-  Eigen::VectorXf Residual (size);     // see Eq. 20 in the paper
+  Eigen::Matrix6Xd Jacobian (6, size); // alpha, beta, gamma, a, b, c as in the linearized transformation matrix
+  Eigen::VectorXd Residual (size);     // see Eq. 20 in the paper
 
   for (int i = 0; i < size; ++i) {
-    const Eigen::Vector3f& q = source->points[i].getVector3fMap();
-    const Eigen::Vector3f& p = target->points[i].getVector3fMap();
-    const Eigen::Vector3f& np = target->points[i].getNormalVector3fMap();
+    const Eigen::Vector3d q = source->points[i].getVector3fMap().cast<double>();
+    const Eigen::Vector3d p = target->points[i].getVector3fMap().cast<double>();
+    const Eigen::Vector3d np = target->points[i].getNormalVector3fMap().cast<double>();
     Residual (i) = (q - p).dot(np);           // Eq. 19 in the paper
     Jacobian.block<3, 1>(0, i) = q.cross(np); // Eq. 30 in the paper
     Jacobian.block<3, 1>(3, i) = np;
   }
 
-  Eigen::Matrix6f JTJ = Jacobian * Jacobian.transpose();  // Jacobian herein has already been transposed (row vector)
-  Eigen::Vector6f JTr = Jacobian * Residual;
-  Eigen::Vector6f X = JTJ.ldlt().solve(-JTr);  // solve a system of linear equations in the form: AX = b
-  return TransformVector6fToMatrix4f(X);
+  Eigen::Matrix6d JTJ = Jacobian * Jacobian.transpose(); // Jacobian herein has already been transposed (row vector)
+  Eigen::Vector6d JTr = Jacobian * Residual;
+  Eigen::Vector6d X = JTJ.ldlt().solve(-JTr); // solve a system of linear equations in the form: AX = b
+  return TransformVector6dToMatrix4d(X);
 }
 
 
-Eigen::Matrix4f ColorICP::TransformVector6fToMatrix4f(const Eigen::Vector6f& input) {
-  Eigen::Matrix4f output;
+Eigen::Matrix4d ColorICP::TransformVector6dToMatrix4d(const Eigen::Vector6d& input) {
+  Eigen::Matrix4d output;
   output.setIdentity();
   // AngleAxis representation implicitly maps the linearized matrix to SO(3)
-  output.block<3, 3>(0, 0) = (Eigen::AngleAxisf(input(2), Eigen::Vector3f::UnitZ()) *
-                              Eigen::AngleAxisf(input(1), Eigen::Vector3f::UnitY()) *
-                              Eigen::AngleAxisf(input(0), Eigen::Vector3f::UnitX())).matrix();
+  output.block<3, 3>(0, 0) = (Eigen::AngleAxisd(input(2), Eigen::Vector3d::UnitZ()) *
+                              Eigen::AngleAxisd(input(1), Eigen::Vector3d::UnitY()) *
+                              Eigen::AngleAxisd(input(0), Eigen::Vector3d::UnitX())).matrix();
   output.block<3, 1>(0, 3) = input.block<3, 1>(3, 0);
   return output;
 }

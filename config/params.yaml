@@ -12,6 +12,6 @@ search_radius: 0.04
 icp_method: color    # pcl, classic, color
 icp_max_corres_dist: 0.05
 icp_transformation_epsilon: 0.000001  # not being used yet
-icp_max_iterations: 5
+icp_max_iterations: 20
 color_icp_lambda: 0.968  # default 0.968 as in the paper
 
