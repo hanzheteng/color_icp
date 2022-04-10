@@ -341,6 +341,7 @@ void ColorICP::prepareColorGradient (const PointCloudPtr& target) {
   target_color_gradient_.clear();
   target_color_gradient_.resize(cloud_size, Eigen::Vector3d::Zero());
 
+  // find color gradient for each point in the target cloud
   for (int i = 0; i < cloud_size; ++i) {
     const Eigen::Vector3d p = target->points[i].getVector3fMap().cast<double>();
     const Eigen::Vector3d np = target->points[i].getNormalVector3fMap().cast<double>();
@@ -349,7 +350,7 @@ void ColorICP::prepareColorGradient (const PointCloudPtr& target) {
     // TODO: test varying weights to combine RGB --> less sensitive; almost no influence; depends on the scene
     // TODO: test if the magnitude of intensity matters in optimization --> a lot; has to be [0, 1]
 
-    // search neighbor points for least square fitting
+    // search neighbor points for each point in the cloud
     kdtree->radiusSearch(target->points[i], search_radius, indices, sq_dist);
     int nn_size = static_cast<int> (indices.size());
     if (nn_size < 5) {
@@ -357,26 +358,25 @@ void ColorICP::prepareColorGradient (const PointCloudPtr& target) {
       continue; // TODO: test the influence of leaving color gradient zero --> no contribution from this component
     }
 
-    Eigen::Matrix3Xd Jacobian (3, nn_size); // 3-vector of dp
-    Eigen::VectorXd Residual (nn_size);     // see Eq. 10 in the paper
-    for (int k = 1; k < nn_size; ++k) {     // skip index 0, which is the query point itself
+    // solve a linear least-squares problem to find the color gradient; see Eq. 10 in the paper
+    Eigen::Matrix3Xd A (3, nn_size); // we have transposed A here for the convenience of computation
+    Eigen::VectorXd b (nn_size);
+    for (int k = 1; k < nn_size; ++k) { // skip index 0, which is the query point itself
       const Eigen::Vector3d pp = target->points[indices[k]].getVector3fMap().cast<double>();
       const Eigen::Vector3d cpp = target->points[indices[k]].getRGBVector3i().cast<double>();
       double ipp = cpp.dot(rgb_to_intensity_weight_) / 255.0;
 
       // project neighbor points to p's tangent plane
       const Eigen::Vector3d& pp_proj = pp - (pp-p).dot(np)*np;
-      Jacobian.block<3, 1>(0, k-1) = pp_proj - p;
-      Residual (k-1) = ipp - ip;
+      A.block<3, 1>(0, k-1) = pp_proj - p;
+      b (k-1) = ipp - ip;
     }
     // add orthogonal constraint dp.dot(np) = 0 with weight (nn_size-1)
-    Jacobian.block<3, 1>(0, nn_size-1) = (nn_size-1) * np;
-    Residual (nn_size-1) = 0; // TODO: test the influence of this constraint --> can make JTr_C closer to 0
-    // --> make JTJ larger (away from 0), JTr no change and X smaller to a reasonable range (e.g., 0-1)
+    A.block<3, 1>(0, nn_size-1) = (nn_size-1) * np;
+    b (nn_size-1) = 0; // TODO: test the influence of this constraint --> can make optimization tighter
 
-    Eigen::Matrix3d JTJ = Jacobian * Jacobian.transpose();
-    Eigen::Vector3d JTr = Jacobian * Residual;
-    Eigen::Vector3d X = JTJ.ldlt().solve(JTr);  // no minus sign
+    // solve for dp
+    Eigen::Vector3d X = (A * A.transpose()).ldlt().solve(A * b);
     target_color_gradient_[i] = X;  // X is the estimated color gradient dp
   }
   std::cout << "Completed color gradient estimation for target cloud\n";
@@ -411,9 +411,9 @@ Eigen::Matrix4d ColorICP::GaussNewtonWithColor (const PointCloudPtr& source, con
     const Eigen::Vector3d& q_proj = q - (q-p).dot(np) * np;
     const double& iq_proj = ip + dp.dot(q_proj-p);
     const Eigen::Matrix3d& M = Eigen::Matrix3d::Identity() - np * np.transpose();
-    const Eigen::Vector3d& dpM = -dp.transpose() * M;
+    const Eigen::Vector3d& dpM = dp.transpose() * M;
 
-    ResidualColor (i) = iq - iq_proj;               // Eq. 18 in the paper
+    ResidualColor (i) = iq_proj - iq;               // Eq. 18 in the paper
     JacobianColor.block<3, 1>(0, i) = q.cross(dpM); // Eq. 28-29 in the paper
     JacobianColor.block<3, 1>(3, i) = dpM;
   }
