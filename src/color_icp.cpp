@@ -93,7 +93,6 @@ ColorICP::ColorICP ()
   downSampleVoxelGrids (target_cloud_);
   estimateNormals (source_cloud_);
   estimateNormals (target_cloud_);
-  prepareColorGradient(target_cloud_);
 
   // registration
   std::string icp_method = params_["icp_method"].As<std::string> ();
@@ -216,6 +215,8 @@ Eigen::Matrix4d ColorICP::PCLICP (const PointCloudPtr& source, const PointCloudP
 Eigen::Matrix4d ColorICP::ClassicICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target) {
   // initialization
   int iteration = params_["icp_max_iterations"].As<int> ();
+  double translation_epsilon = params_["icp_transformation_epsilon"].As<double> ();
+  double rotation_epsilon = 1.0 - params_["icp_transformation_epsilon"].As<double> ();
   double distance_threshold = params_["icp_max_corres_dist"].As<double> (); // icp.setMaxCorrespondenceDistance
   int cloud_size = static_cast<int> (source->size());
   Eigen::Matrix4d final_transformation = Eigen::Matrix4d::Identity();
@@ -245,8 +246,8 @@ Eigen::Matrix4d ColorICP::ClassicICPRegistration (const PointCloudPtr& source, c
 
     // convert to Eigen format
     int idx = 0;
-    Eigen::Matrix3d cloud_src (3, correspondences.size());
-    Eigen::Matrix3d cloud_tgt (3, correspondences.size());
+    Eigen::Matrix3Xd cloud_src (3, correspondences.size());
+    Eigen::Matrix3Xd cloud_tgt (3, correspondences.size());
     for (const auto& corres : correspondences) {
       cloud_src (0, idx) = source_trans->points[corres.first].x;
       cloud_src (1, idx) = source_trans->points[corres.first].y;
@@ -257,15 +258,23 @@ Eigen::Matrix4d ColorICP::ClassicICPRegistration (const PointCloudPtr& source, c
       ++idx;
     }
 
-    // skip a few steps here for simplicity, such as
-    // check convergence (if trans update < required epsilon)
-    // check if cloud_src and cloud_tgt are valid (>0 or >3?)
+    // skip a few steps (such as sanity checks) here for simplicity
 
     // solve using Umeyama's algorithm (SVD)
-    Eigen::Matrix4d transformation = Eigen::umeyama<Eigen::Matrix3d, Eigen::Matrix3d> (cloud_src, cloud_tgt, false);
+    Eigen::Matrix4d transformation = Eigen::umeyama<Eigen::Matrix3Xd, Eigen::Matrix3Xd> (cloud_src, cloud_tgt, false);
     final_transformation = transformation * final_transformation;
     std::cout << "it = " << t << "; cloud size = " << cloud_size << "; idx = " << idx << std::endl;
     std::cout << "current transformation estimation" << std::endl << final_transformation << std::endl;
+
+    // check convergence
+    double cos_angle = 0.5 * (transformation.coeff (0, 0) + transformation.coeff (1, 1) + transformation.coeff (2, 2) - 1);
+    double translation_sqr = transformation.coeff (0, 3) * transformation.coeff (0, 3) +
+                             transformation.coeff (1, 3) * transformation.coeff (1, 3) +
+                             transformation.coeff (2, 3) * transformation.coeff (2, 3);
+    if (cos_angle >= rotation_epsilon && translation_sqr <= translation_epsilon) {
+      std::cout << "converged!" << std::endl;
+      break;
+    }
   }
 
   return final_transformation;
@@ -278,10 +287,13 @@ Eigen::Matrix4d ColorICP::ClassicICPRegistration (const PointCloudPtr& source, c
 Eigen::Matrix4d ColorICP::ColorICPRegistration (const PointCloudPtr& source, const PointCloudPtr& target) {
   // initialization
   int iteration = params_["icp_max_iterations"].As<int> ();
+  double translation_epsilon = params_["icp_transformation_epsilon"].As<double> ();
+  double rotation_epsilon = 1.0 - params_["icp_transformation_epsilon"].As<double> ();
   double distance_threshold = params_["icp_max_corres_dist"].As<double> (); // icp.setMaxCorrespondenceDistance
   int cloud_size = static_cast<int> (source->size());
   Eigen::Matrix4d final_transformation = Eigen::Matrix4d::Identity();
   pcl::PointCloud<PointT>::Ptr source_trans (new pcl::PointCloud<PointT>);
+  prepareColorGradient(target);
 
   // build K-d tree for target cloud
   pcl::search::KdTree<PointT>::Ptr kdtree (new pcl::search::KdTree<PointT>);
@@ -324,6 +336,16 @@ Eigen::Matrix4d ColorICP::ColorICPRegistration (const PointCloudPtr& source, con
     final_transformation = transformation * final_transformation;
     std::cout << "transformation in this iteration" << std::endl << transformation << std::endl;
     std::cout << "current transformation estimation" << std::endl << final_transformation << std::endl;
+
+    // check convergence
+    double cos_angle = 0.5 * (transformation.coeff (0, 0) + transformation.coeff (1, 1) + transformation.coeff (2, 2) - 1);
+    double translation_sqr = transformation.coeff (0, 3) * transformation.coeff (0, 3) +
+                             transformation.coeff (1, 3) * transformation.coeff (1, 3) +
+                             transformation.coeff (2, 3) * transformation.coeff (2, 3);
+    if (cos_angle >= rotation_epsilon && translation_sqr <= translation_epsilon) {
+      std::cout << "converged!" << std::endl;
+      break;
+    }
   }
 
   return final_transformation;
@@ -422,10 +444,6 @@ Eigen::Matrix4d ColorICP::GaussNewtonWithColor (const PointCloudPtr& source, con
   Eigen::Vector6d JTr_G = JacobianGeo * ResidualGeo;
   Eigen::Matrix6d JTJ_C = JacobianColor * JacobianColor.transpose();
   Eigen::Vector6d JTr_C = JacobianColor * ResidualColor;
-  std::cout << "JTJ_G = \n" <<  JTJ_G << std::endl;
-  std::cout << "JTr_G = \n" <<  JTr_G << std::endl;
-  std::cout << "JTJ_C = \n" <<  JTJ_C << std::endl;
-  std::cout << "JTr_C = \n" <<  JTr_C << std::endl;
 
   Eigen::Matrix6d JTJ = sqrt(lambda) * JTJ_G + sqrt(1-lambda) * JTJ_C;
   Eigen::Vector6d JTr = sqrt(lambda) * JTr_G + sqrt(1-lambda) * JTr_C;
